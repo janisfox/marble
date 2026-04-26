@@ -14,31 +14,31 @@ founded by janis (@the_h0lysandwich)
 
 ]]--
 
---// Services //--
+--// Services
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local DataStoreService = game:GetService("DataStoreService")
 local MessagingService = game:GetService("MessagingService")
 
---// Locals //--
+--// Locals
 local isServer = RunService:IsServer()
 
---// Constants //--
-local DS_USER_AUTH_KEY   = "marble_user_auth"    -- DataStore key: userId -> {roleName, ...}
-local DS_GROUP_AUTH_KEY  = "marble_group_auth"   -- DataStore key: groupId -> {roleName, rank}
-local DS_ROLE_KEY        = "marble_roles"        -- DataStore key: roleName -> roleData
-local MSG_CHANNEL        = "marble_sync_%s"      -- MessagingService channel per runtime key
+--// Constants
+local DS_USER_AUTH_KEY = "marble_user_auth"
+local DS_GROUP_AUTH_KEY = "marble_group_auth"
+local DS_ROLE_KEY = "marble_roles"
+local MSG_CHANNEL = "marble_sync_%s"
 
 -- Message action types
 local ACTION = {
-	AUTH_USER    = "AUTH_USER",
-	AUTH_GROUP   = "AUTH_GROUP",
-	DEAUTH_USER  = "DEAUTH_USER",
+	AUTH_USER = "AUTH_USER",
+	AUTH_GROUP = "AUTH_GROUP",
+	DEAUTH_USER = "DEAUTH_USER",
 	DEAUTH_GROUP = "DEAUTH_GROUP",
-	MODIFY_ROLE  = "MODIFY_ROLE",
+	MODIFY_ROLE = "MODIFY_ROLE",
 }
 
---// Internal //--
+--// Internal
 local internal = {}
 
 function internal.registerPermission(self, permission: string)
@@ -88,7 +88,7 @@ function internal.dsGet(store: DataStore, key: string): any
 end
 
 -- Publish a cross-server sync message (fire and forget, errors are non-fatal)
-function internal.publish(channel: string, payload: table)
+function internal.publish(channel: string, payload: {})
 	task.spawn(function()
 		local ok, err = pcall(function()
 			MessagingService:PublishAsync(channel, payload)
@@ -99,7 +99,7 @@ function internal.publish(channel: string, payload: table)
 	end)
 end
 
---// Types //--
+--// Types
 export type ConditionTypes = "any" | number
 
 export type MarbleData = {
@@ -115,7 +115,7 @@ export type RoleData = {
 	datastore: boolean?,
 }
 
---// Globals //--
+--// Globals
 local marble = {}
 marble.__index = marble
 marble.runtimes = {}
@@ -127,19 +127,19 @@ function marble.new(key: string, data: MarbleData)
 
 	self.authorized = {
 		Groups = {} :: {[number]: {roleName: string, rank: number}},
-		Users  = {} :: {[number]: string},
+		Users = {} :: {[number]: string},
 	}
-	self.userRoles   = {} :: {[number]: {string}}
-	self.roles       = {} :: {[string]: {permissions: {[string]: boolean}, color: Color3?, datastore: boolean?}}
+	self.userRoles = {} :: {[number]: {string}}
+	self.roles = {} :: {[string]: {permissions: {[string]: boolean}, color: Color3?, datastore: boolean?}}
 	self.permissions = {} :: {[string]: true}
 
 	-- DataStore handles (nil if no datastore configured)
 	if data.datastore and isServer then
 		local scope = data.scope or "global"
-		self._dsUserAuth  = DataStoreService:GetDataStore(DS_USER_AUTH_KEY,  data.datastore .. "_" .. scope)
+		self._dsUserAuth = DataStoreService:GetDataStore(DS_USER_AUTH_KEY, data.datastore .. "_" .. scope)
 		self._dsGroupAuth = DataStoreService:GetDataStore(DS_GROUP_AUTH_KEY, data.datastore .. "_" .. scope)
-		self._dsRoles     = DataStoreService:GetDataStore(DS_ROLE_KEY,       data.datastore .. "_" .. scope)
-		self._msgChannel  = MSG_CHANNEL:format(key)
+		self._dsRoles = DataStoreService:GetDataStore(DS_ROLE_KEY, data.datastore .. "_" .. scope)
+		self._msgChannel = MSG_CHANNEL:format(key)
 	end
 
 	self.userUpdated = internal:Signal()
@@ -160,9 +160,7 @@ function marble.getRuntime(key: string)
 	return marble.runtimes[key]
 end
 
--- ────────────────────────────────────────────────────────────────────────────
 -- Init
--- ────────────────────────────────────────────────────────────────────────────
 
 -- Load persisted roles and auth entries from DataStore on server start
 function marble:_initDataStore()
@@ -240,13 +238,11 @@ function marble:_initPlayerHandlers()
 	end)
 end
 
--- ────────────────────────────────────────────────────────────────────────────
 -- Role resolution
--- ────────────────────────────────────────────────────────────────────────────
 
 -- Build the in-memory userRoles entry for a player from authorized Users/Groups
 function marble:_resolvePlayerRoles(player: Player)
-	local uid   = player.UserId
+	local uid = player.UserId
 	local roles = {}
 
 	-- Direct user auth
@@ -259,12 +255,12 @@ function marble:_resolvePlayerRoles(player: Player)
 
 	-- Group auth
 	for groupId, entry in pairs(self.authorized.Groups) do
-		local ok1, inGroup = pcall(function() return player:IsInGroup(groupId) end)
+		local ok1, inGroup = pcall(function() return player:IsInGroupAsync(groupId) end)
 		if not ok1 or not inGroup then continue end
 
 		local meetsRank = true
 		if entry.rank then
-			local ok2, playerRank = pcall(function() return player:GetRankInGroup(groupId) end)
+			local ok2, playerRank = pcall(function() return player:GetRankInGroupAsync(groupId) end)
 			meetsRank = ok2 and playerRank >= entry.rank
 		end
 
@@ -280,11 +276,9 @@ function marble:_resolvePlayerRoles(player: Player)
 	self.userUpdated:Fire(player)
 end
 
--- ────────────────────────────────────────────────────────────────────────────
 -- Remote action handler (applied on THIS server when a message arrives)
--- ────────────────────────────────────────────────────────────────────────────
 
-function marble:_applyRemoteAction(payload: table)
+function marble:_applyRemoteAction(payload: {[string]: any})
 	local action = payload.action
 
 	if action == ACTION.AUTH_USER then
@@ -330,9 +324,7 @@ function marble:_applyRemoteAction(payload: table)
 	end
 end
 
--- ────────────────────────────────────────────────────────────────────────────
 -- Public API
--- ────────────────────────────────────────────────────────────────────────────
 
 function marble:registerPermission(perms: string | {string})
 	if not isServer then return end
@@ -362,9 +354,9 @@ function marble:registerRole(data: RoleData)
 	end
 
 	self.roles[data.name] = {
-		permissions        = permissionCopy,
-		color              = data.color,
-		datastore          = data.datastore,
+		permissions = permissionCopy,
+		color = data.color,
+		datastore = data.datastore,
 		allowAuthManagement = data.allowAuthManagement,
 	}
 
@@ -374,8 +366,8 @@ function marble:registerRole(data: RoleData)
 			internal.dsUpdate(self._dsRoles, "roles", function(current)
 				current = current or {}
 				current[data.name] = {
-					permissions        = permissionCopy,
-					datastore          = data.datastore,
+					permissions = permissionCopy,
+					datastore = data.datastore,
 					allowAuthManagement = data.allowAuthManagement,
 					-- Color3 can't be stored in DataStore; store components instead
 					colorR = data.color and data.color.R or nil,
@@ -425,8 +417,8 @@ function marble:modifyRole(role: string, newData: RoleData)
 		end)
 
 		internal.publish(self._msgChannel, {
-			action      = ACTION.MODIFY_ROLE,
-			roleName    = role,
+			action = ACTION.MODIFY_ROLE,
+			roleName = role,
 			permissions = permissionCopy,
 		})
 	end
@@ -469,8 +461,8 @@ function marble:auth(_type: "user" | "group", id: number, roleName: string, rank
 			end)
 
 			internal.publish(self._msgChannel, {
-				action   = ACTION.AUTH_USER,
-				userId   = id,
+				action = ACTION.AUTH_USER,
+				userId = id,
 				roleName = roleName,
 			})
 		end
@@ -496,10 +488,10 @@ function marble:auth(_type: "user" | "group", id: number, roleName: string, rank
 			end)
 
 			internal.publish(self._msgChannel, {
-				action   = ACTION.AUTH_GROUP,
-				groupId  = id,
+				action = ACTION.AUTH_GROUP,
+				groupId = id,
 				roleName = roleName,
-				rank     = rank or 1,
+				rank = rank or 1,
 			})
 		end
 
@@ -561,7 +553,7 @@ function marble:deauth(_type: "user" | "group", id: number)
 			end)
 
 			internal.publish(self._msgChannel, {
-				action  = ACTION.DEAUTH_GROUP,
+				action = ACTION.DEAUTH_GROUP,
 				groupId = id,
 			})
 		end
