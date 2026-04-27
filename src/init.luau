@@ -248,6 +248,8 @@ function marble.new(key: string, data: MarbleData)
 
 	self._key = key
 	self._initialized = false
+	self._ready = false
+	self.onReady = internal:Signal()
 
 	--// Authorization tables
 	self.authorized = {
@@ -314,7 +316,7 @@ function marble:_initDataStore()
 				if typeof(roleName) == "string" and typeof(roleData) == "table" then
 					-- Only load if not already hardcoded
 					if not self.roles[roleName] then
-						local color = internal.decodeColor(roleData)
+						local color = internal.decodeColor(roleData.color)
 						self.roles[roleName] = {
 							permissions = roleData.permissions or {},
 							color = color,
@@ -337,7 +339,8 @@ function marble:_initDataStore()
 		if savedUserAuth and typeof(savedUserAuth) == "table" then
 			for userIdStr, roleName in pairs(savedUserAuth) do
 				local userId = tonumber(userIdStr)
-				if userId and typeof(roleName) == "string" and self.roles[roleName] then
+				if userId and typeof(roleName) == "string" then
+					-- Store unconditionally; role may be registered later in code
 					self.authorized.Users[userId] = roleName
 				end
 			end
@@ -361,6 +364,9 @@ function marble:_initDataStore()
 		for _, player in Players:GetPlayers() do
 			self:_resolvePlayerRoles(player)
 		end
+
+		self._ready = true
+		self.onReady:Fire()
 	end)
 end
 
@@ -547,6 +553,14 @@ end
 
 --// Public API
 
+--[[
+	Waits until the Datastore of the Authentication table finished loading.
+]]
+function marble:waitUntilReady()
+    if self._ready then return end
+    self.onReady.Event:Wait()
+end
+
 --// Public API - Permissions
 
 --[[
@@ -691,7 +705,7 @@ end
 	@param rank (Optional) Minimum group rank required (for group auth)
 	@return true if successful, false otherwise
 ]]
-function marble:auth(authType: "user" | "group", id: number, roleName: string, rank: number?): boolean
+function marble:auth(authType: "user" | "group", id: number, roleName: string, rank: number?, datastore: boolean?): boolean
 	if not isServer then return false end
 	if not internal.validateNumber(id, "id") then return false end
 	if not internal.validateRole(self, roleName) then return false end
@@ -699,8 +713,6 @@ function marble:auth(authType: "user" | "group", id: number, roleName: string, r
 		warn("[Marble] rank must be a non-negative number")
 		return false
 	end
-
-	local roleIsDynamic = self.roles[roleName].datastore
 
 	if authType == "user" then
 		-- Verify userId is valid
@@ -721,7 +733,7 @@ function marble:auth(authType: "user" | "group", id: number, roleName: string, r
 		end
 
 		-- Persist and sync if dynamic
-		if roleIsDynamic and self._dsUserAuth then
+		if datastore and self._dsUserAuth then
 			task.spawn(function()
 				internal.dsUpdate(self._dsUserAuth, "users", function(current)
 					current = current or {}
@@ -751,7 +763,7 @@ function marble:auth(authType: "user" | "group", id: number, roleName: string, r
 		end
 
 		-- Persist and sync if dynamic
-		if roleIsDynamic and self._dsGroupAuth then
+		if datastore and self._dsGroupAuth then
 			task.spawn(function()
 				internal.dsUpdate(self._dsGroupAuth, "groups", function(current)
 					current = current or {}
@@ -783,14 +795,11 @@ end
 	@param id The user ID or group ID to revoke
 	@return true if successful, false otherwise
 ]]
-function marble:deauth(authType: "user" | "group", id: number): boolean
+function marble:deauth(authType: "user" | "group", id: number, datastore: boolean?): boolean
 	if not isServer then return false end
 	if not internal.validateNumber(id, "id") then return false end
 
 	if authType == "user" then
-		local roleName = self.authorized.Users[id]
-		local roleIsDynamic = roleName and self.roles[roleName] and self.roles[roleName].datastore
-
 		self.authorized.Users[id] = nil
 		self.userRoles[id] = nil
 
@@ -801,7 +810,7 @@ function marble:deauth(authType: "user" | "group", id: number): boolean
 		end
 
 		-- Persist and sync if dynamic
-		if roleIsDynamic and self._dsUserAuth then
+		if datastore and self._dsUserAuth then
 			task.spawn(function()
 				internal.dsUpdate(self._dsUserAuth, "users", function(current)
 					current = current or {}
@@ -819,9 +828,6 @@ function marble:deauth(authType: "user" | "group", id: number): boolean
 		return true
 
 	elseif authType == "group" then
-		local entry = self.authorized.Groups[id]
-		local roleIsDynamic = entry and self.roles[entry.roleName] and self.roles[entry.roleName].datastore
-
 		self.authorized.Groups[id] = nil
 
 		-- Re-resolve all players
@@ -830,7 +836,7 @@ function marble:deauth(authType: "user" | "group", id: number): boolean
 		end
 
 		-- Persist and sync if dynamic
-		if roleIsDynamic and self._dsGroupAuth then
+		if datastore and self._dsGroupAuth then
 			task.spawn(function()
 				internal.dsUpdate(self._dsGroupAuth, "groups", function(current)
 					current = current or {}
