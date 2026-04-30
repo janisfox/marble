@@ -1,5 +1,5 @@
 # Marble
-**Marble is a Role-Based Access Control (RBAC) system for Roblox.**
+**Marble is a Role-Based Access Control (RBAC) permission module for Roblox.**
 ## Features
 It provides:
 - Roles
