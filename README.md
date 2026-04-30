@@ -110,9 +110,9 @@ runtime:auth(authType: "user" | "group", id: number, roleName: string, rank: num
 ### marble.deauth
 Revokes authorization for a user or group.
 ```luau
-@param authType Either "user" or "group"
-@param id The user ID or group ID to revoke
-@return true if successful, false otherwise
+-- @param authType Either "user" or "group"
+-- @param id The user ID or group ID to revoke
+-- @return true if successful, false otherwise
 marble.deauth(self, authType: "user" | "group", id: number, datastore: boolean?)
 runtime:deauth(authType: "user" | "group", id: number, datastore: boolean?)
 ```
