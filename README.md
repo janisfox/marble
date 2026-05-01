@@ -121,10 +121,10 @@ runtime:deauth(authType: "user" | "group", id: number, datastore: boolean?)
 Revokes all users and groups authorized with a specific role.
 Useful for removing access when a role is deleted or compromised.
 ```luau
--- @param roleName The role to deauthorize
--- @return The number of entries removed
-marble.waitUntilReady(self, roleName: string)
-runtime:waitUntilReady(roleName: string)
+-- @param data The role name
+-- @return true if successful, false otherwise
+marble.deauthRole(self, role: string)
+runtime:deauthRole(role: string)
 ```
 ### marble.hasPermission
 Checks if a user has a specific permission.
