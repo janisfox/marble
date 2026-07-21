@@ -4,6 +4,8 @@
 It provides:
 - Roles
 - Permissions
+- Role priority (highest role wins)
+- Multi-role groups
 - DataStore-backed persistence
 - Easy-to-use API
 
@@ -32,10 +34,15 @@ marble:registerRole({
     kick = true,
   }
   color = Color3.new(1, 0, 0), -- color system if you want
+  priority = 100, -- cosmetic like color, but also decides which role wins
 })
 
 marble:auth("user", 123, "Owner")
+
+-- A group can grant several roles, each behind its own minimum rank.
+-- A player gets the highest-priority role they qualify for.
 marble:auth("group", 456, "Owner", 255)
+marble:auth("group", 456, "Moderator", 100)
 ```
 
 ---
@@ -71,33 +78,49 @@ runtime:registerPermission(perms: string | {string})
 ```
 ### marble.registerRole
 Registers a new role in the system.
-Roles can have multiple permissions and optional metadata (color, management flags).
+Roles can have multiple permissions and optional metadata (color, priority, management flags).
+Priority is descriptive data like color, but it also decides which role wins when several
+apply to the same player. Higher priority wins; it defaults to 0.
 ```luau
--- @param data The role data (name, permissions, optional color/flags)
+-- @param data The role data (name, permissions, optional color/priority/flags)
 -- @return true if successful, false otherwise
 export type RoleData = {
   name: string,
   permissions: {[string]: boolean},
   color: Color3?,
+  priority: number?,
   datastore: boolean?,
 }
 marble.registerRole(self, data: RoleData)
 runtime:registerRole(data: RoleData)
 ```
 ### marble.modifyRole
-Modifies permissions of an existing role.
+Modifies an existing role.
+Takes either a plain permissions map, or a changes table to also update color and priority.
 Can only modify permissions that are already registered.
 Re-resolves all connected players after modification.
 ```luau
 -- @param roleName The role to modify
--- @param newPermissions Table of permission updates
+-- @param changes Permission updates, or a table of role changes
 -- @return true if successful, false otherwise
-marble.modifyRole(self, roleName: string, newPermissions: {[string]: boolean})
-runtime:modifyRole(roleName: string, newPermissions: {[string]: boolean})
+export type RoleChanges = {
+  permissions: {[string]: boolean}?,
+  color: Color3?,
+  priority: number?,
+}
+marble.modifyRole(self, roleName: string, changes: {[string]: boolean} | RoleChanges)
+runtime:modifyRole(roleName: string, changes: {[string]: boolean} | RoleChanges)
+
+-- both forms work
+runtime:modifyRole("Moderator", {ban = false})
+runtime:modifyRole("Moderator", {permissions = {ban = false}, priority = 50})
 ```
 ### marble.auth
 Authorizes a user or group to receive a specific role.
 Validates that the role exists and the ID is valid.
+Group authorizations are additive: a group can bind several roles, each with its own
+minimum rank, and a player receives the highest-priority role they qualify for.
+Re-authorizing the same role on a group updates its rank.
 ```luau
 -- @param authType Either "user" or "group"
 -- @param id The user ID or group ID
@@ -108,13 +131,23 @@ marble.auth(self, authType: "user" | "group", id: number, roleName: string, rank
 runtime:auth(authType: "user" | "group", id: number, roleName: string, rank: number?, datastore: boolean?)
 ```
 ### marble.deauth
-Revokes authorization for a user or group.
+Revokes authorization for a user, or every role bound to a group.
+Use `deauthGroupRole` to remove a single role from a group.
 ```luau
 -- @param authType Either "user" or "group"
 -- @param id The user ID or group ID to revoke
 -- @return true if successful, false otherwise
 marble.deauth(self, authType: "user" | "group", id: number, datastore: boolean?)
 runtime:deauth(authType: "user" | "group", id: number, datastore: boolean?)
+```
+### marble.deauthGroupRole
+Removes a single role binding from a group, leaving its other roles intact.
+```luau
+-- @param groupId The group to modify
+-- @param roleName The role binding to remove
+-- @return true if the binding existed and was removed, false otherwise
+marble.deauthGroupRole(self, groupId: number, roleName: string, datastore: boolean?)
+runtime:deauthGroupRole(groupId: number, roleName: string, datastore: boolean?)
 ```
 ---
 ### marble.dauthRole
@@ -128,7 +161,8 @@ runtime:deauthRole(role: string)
 ```
 ### marble.hasPermission
 Checks if a user has a specific permission.
-Looks through all roles assigned to the user.
+Roles are consulted from highest to lowest priority and the first role that explicitly
+states the permission wins, so a high-priority role can deny what a lower one grants.
 ```luau
 -- @param userId The user ID to check
 -- @param permission The permission name
@@ -153,6 +187,22 @@ Gets all groups authorized with a specific role.
 marble.getAuthorizedGroups(self, roleName: string)
 runtime:getAuthorizedGroups(roleName: string)
 ```
+### marble.getGroupRoles
+Gets every role bound to a group and the rank each one requires.
+```luau
+-- @param groupId The group to query
+-- @return Table mapping role names to their minimum rank
+marble.getGroupRoles(self, groupId: number)
+runtime:getGroupRoles(groupId: number)
+```
+### marble.getTopRole
+Gets the highest-priority role a user currently holds.
+```luau
+-- @param userId The user ID
+-- @return The role name and its data, or nil if the user has no roles
+marble.getTopRole(self, userId: number)
+runtime:getTopRole(userId: number)
+```
 ### marble.getRole
 Gets a specific role's data.
 ```luau
@@ -168,10 +218,25 @@ Gets all registered roles.
 marble.getAllRoles(self)
 runtime:getAllRoles()
 ```
+### marble.getRolesByPriority
+Gets all registered roles ordered from highest to lowest priority.
+```luau
+-- @return Array of {name, role} entries
+marble.getRolesByPriority(self)
+runtime:getRolesByPriority()
+```
 ### marble.getAllPermissions
 Gets all registered permissions.
 ```luau
 -- @return Array of permission names
 marble.getAllPermissions(self)
 runtime:getAllPermissions()
+```
+---
+### marble.destroy
+Tears down a runtime: disconnects handlers, releases signals and unregisters it from the
+runtime table. The instance must not be used afterwards.
+```luau
+marble.destroy(self)
+runtime:destroy()
 ```
