@@ -1202,8 +1202,10 @@ end
 	Removes a single role binding from a group, leaving its other roles intact.
 	@param groupId The group to modify
 	@param roleName The role binding to remove
-	@param datastore (Optional) Persist and broadcast this revocation
-	@return true if the binding existed and was removed, false otherwise
+	@param datastore (Optional) Persist and broadcast this revocation. This runs
+		even if the binding is missing on this server, since it may still be
+		saved or present on other servers.
+	@return true if the binding existed on this server and was removed, false otherwise
 ]]
 function marble:deauthGroupRole(groupId: number, roleName: string, datastore: boolean?): boolean
 	if not isServer then return false end
@@ -1213,14 +1215,16 @@ function marble:deauthGroupRole(groupId: number, roleName: string, datastore: bo
 	self:_noteRevoked("groupRole", groupId, roleName)
 
 	local bindings = self.authorized.Groups[groupId]
-	if not bindings or bindings[roleName] == nil then return false end
+	local existed = bindings ~= nil and bindings[roleName] ~= nil
 
-	bindings[roleName] = nil
-	if next(bindings) == nil then
-		self.authorized.Groups[groupId] = nil
+	if existed then
+		bindings[roleName] = nil
+		if next(bindings) == nil then
+			self.authorized.Groups[groupId] = nil
+		end
+
+		self:_resolveAllPlayers()
 	end
-
-	self:_resolveAllPlayers()
 
 	if datastore and self._dsGroupAuth then
 		task.spawn(function()
@@ -1242,7 +1246,7 @@ function marble:deauthGroupRole(groupId: number, roleName: string, datastore: bo
 		})
 	end
 
-	return true
+	return existed
 end
 
 --[[
