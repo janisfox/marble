@@ -862,6 +862,9 @@ function marble:destroy()
 		marble.runtimes[self._key] = nil
 	end
 
+	-- Release anything still blocked in waitUntilReady before the signal goes away
+	self:_markReady()
+
 	self.onReady:Destroy()
 	self.userUpdated:Destroy()
 	self._initialized = false
