@@ -443,6 +443,10 @@ function marble:_initDataStore()
 		return
 	end
 
+	-- Revocations made while loading. The saved data read below may predate
+	-- them, so matching saved entries must not be restored.
+	self._loadRevoked = { users = {}, groups = {}, groupRoles = {}, roles = {} }
+
 	task.spawn(function()
 		-- Load persisted roles
 		local savedRoles = internal.dsGet(self._dsRoles, "roles")
@@ -471,11 +475,13 @@ function marble:_initDataStore()
 
 		-- Load persisted user authorizations. Entries set in memory while loading
 		-- (by code or another server) are newer than the saved ones, so they win.
+		local revoked = self._loadRevoked
 		local savedUserAuth = internal.dsGet(self._dsUserAuth, "users")
 		if typeof(savedUserAuth) == "table" then
 			for userIdStr, roleName in savedUserAuth do
 				local userId = tonumber(userIdStr)
-				if userId and typeof(roleName) == "string" and self.authorized.Users[userId] == nil then
+				if userId and typeof(roleName) == "string" and self.authorized.Users[userId] == nil
+					and not revoked.users[userId] and not revoked.roles[roleName] then
 					-- Store even if unregistered; role may be registered later in code
 					self.authorized.Users[userId] = roleName
 				end
@@ -489,17 +495,22 @@ function marble:_initDataStore()
 			for groupIdStr, entry in savedGroupAuth do
 				local groupId = tonumber(groupIdStr)
 				local saved = groupId and internal.normalizeGroupEntry(entry)
-				if saved then
+				if saved and not revoked.groups[groupId] then
+					local revokedRoles = revoked.groupRoles[groupId]
 					local bindings = self.authorized.Groups[groupId] or {}
 					for roleName, minRank in saved do
-						if bindings[roleName] == nil then
+						if bindings[roleName] == nil and not revoked.roles[roleName]
+							and not (revokedRoles and revokedRoles[roleName]) then
 							bindings[roleName] = minRank
 						end
 					end
-					self.authorized.Groups[groupId] = bindings
+					if next(bindings) ~= nil then
+						self.authorized.Groups[groupId] = bindings
+					end
 				end
 			end
 		end
+		self._loadRevoked = nil
 
 		-- Sync roles for players who joined before DataStore loaded
 		self:_resolveAllPlayers()
@@ -642,6 +653,7 @@ function marble:_applyRemoteAction(payload: {[string]: any})
 	elseif action == ACTION.DEAUTH_USER then
 		local userId = payload.userId
 		if typeof(userId) == "number" then
+			self:_noteRevoked("user", userId)
 			self.authorized.Users[userId] = nil
 			self.userRoles[userId] = nil
 			local player = Players:GetPlayerByUserId(userId)
@@ -664,6 +676,7 @@ function marble:_applyRemoteAction(payload: {[string]: any})
 	elseif action == ACTION.DEAUTH_GROUP then
 		local groupId = payload.groupId
 		if typeof(groupId) == "number" then
+			self:_noteRevoked("group", groupId)
 			self.authorized.Groups[groupId] = nil
 			self:_resolveAllPlayers()
 		end
@@ -671,6 +684,9 @@ function marble:_applyRemoteAction(payload: {[string]: any})
 	elseif action == ACTION.DEAUTH_GROUP_ROLE then
 		local groupId = payload.groupId
 		local roleName = payload.roleName
+		if typeof(groupId) == "number" and typeof(roleName) == "string" then
+			self:_noteRevoked("groupRole", groupId, roleName)
+		end
 		local bindings = typeof(groupId) == "number" and self.authorized.Groups[groupId]
 		if bindings and typeof(roleName) == "string" then
 			bindings[roleName] = nil
@@ -743,12 +759,36 @@ function marble:_applyRemoteAction(payload: {[string]: any})
 end
 
 --[[
+	Records a revocation made while saved data is still loading, so the load
+	does not restore it. No-op once loading has finished.
+	@param kind "user", "group", "groupRole" or "role"
+	@param id The user or group ID (unused for "role")
+	@param roleName The role name (for "groupRole" and "role")
+]]
+function marble:_noteRevoked(kind: string, id: number?, roleName: string?)
+	local revoked = self._loadRevoked
+	if not revoked then return end
+
+	if kind == "user" then
+		revoked.users[id] = true
+	elseif kind == "group" then
+		revoked.groups[id] = true
+	elseif kind == "groupRole" then
+		revoked.groupRoles[id] = revoked.groupRoles[id] or {}
+		revoked.groupRoles[id][roleName] = true
+	elseif kind == "role" then
+		revoked.roles[roleName] = true
+	end
+end
+
+--[[
 	Removes every user and group binding pointing at a role (local state only).
 	@param roleName The role to strip
 	@return The number of entries removed
 ]]
 function marble:_stripRole(roleName: string): number
 	local removed = 0
+	self:_noteRevoked("role", nil, roleName)
 
 	-- Remove all users with this role
 	for userId, role in self.authorized.Users do
@@ -1101,6 +1141,7 @@ function marble:deauth(authType: "user" | "group", id: number, datastore: boolea
 	if not internal.validateNumber(id, "id") then return false end
 
 	if authType == "user" then
+		self:_noteRevoked("user", id)
 		self.authorized.Users[id] = nil
 		self.userRoles[id] = nil
 
@@ -1129,6 +1170,7 @@ function marble:deauth(authType: "user" | "group", id: number, datastore: boolea
 		return true
 
 	elseif authType == "group" then
+		self:_noteRevoked("group", id)
 		self.authorized.Groups[id] = nil
 
 		-- Re-resolve all players
@@ -1167,6 +1209,8 @@ function marble:deauthGroupRole(groupId: number, roleName: string, datastore: bo
 	if not isServer then return false end
 	if not internal.validateNumber(groupId, "groupId") then return false end
 	if not internal.validateString(roleName, "role name") then return false end
+
+	self:_noteRevoked("groupRole", groupId, roleName)
 
 	local bindings = self.authorized.Groups[groupId]
 	if not bindings or bindings[roleName] == nil then return false end
