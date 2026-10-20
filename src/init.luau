@@ -589,13 +589,17 @@ function marble:_resolvePlayerRoles(player: Player)
 		table.insert(roles, directRole)
 	end
 
-	-- Group-based authorization: one winning role per group
-	for groupId, bindings in self.authorized.Groups do
-		if typeof(bindings) ~= "table" then continue end
-
+	-- Group-based authorization: one winning role per group.
+	-- Iterate a snapshot: groupRank yields, and groups may be added meanwhile,
+	-- which is undefined behavior for a table being traversed.
+	for groupId in table.clone(self.authorized.Groups) do
 		-- Highest of the player's roles in the group; 0 means they are not a member
 		local playerRank = internal.groupRank(uid, groupId)
 		if playerRank <= 0 then continue end
+
+		-- Re-read after the yield, in case the group was revoked meanwhile
+		local bindings = self.authorized.Groups[groupId]
+		if typeof(bindings) ~= "table" then continue end
 
 		-- Pick the highest role the player qualifies for within this group
 		local bestRole, bestRank = nil, 0
