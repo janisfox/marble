@@ -1153,6 +1153,8 @@ end
 --[[
 	Revokes all users and groups authorized with a specific role.
 	Useful for removing access when a role is deleted or compromised.
+	Also purges persisted assignments and broadcasts to other servers when
+	DataStore features are enabled.
 	@param roleName The role to deauthorize
 	@return The number of entries removed
 ]]
@@ -1160,19 +1162,48 @@ function marble:deauthRole(roleName: string): number
 	if not isServer then return 0 end
 	if not internal.validateRole(self, roleName) then return 0 end
 
-	local roleIsDynamic = self.roles[roleName].datastore
 	local removed = self:_stripRole(roleName)
 
 	-- Re-resolve all players
 	self:_resolveAllPlayers()
 
-	-- Sync if dynamic
-	if roleIsDynamic then
-		internal.publish(self._msgChannel, {
-			action = ACTION.DEAUTH_ROLE,
-			roleName = roleName,
-		})
+	-- Purge persisted assignments regardless of whether the role itself is dynamic,
+	-- since users and groups can be saved under a code-defined role
+	if self._dsUserAuth then
+		task.spawn(function()
+			internal.dsUpdate(self._dsUserAuth, "users", function(current)
+				current = current or {}
+				for userIdStr, storedRole in current do
+					if storedRole == roleName then
+						current[userIdStr] = nil
+					end
+				end
+				return current
+			end)
+		end)
 	end
+
+	if self._dsGroupAuth then
+		task.spawn(function()
+			internal.dsUpdate(self._dsGroupAuth, "groups", function(current)
+				current = current or {}
+				for groupIdStr, entry in current do
+					local stored = internal.normalizeGroupEntry(entry)
+					if stored and stored[roleName] ~= nil then
+						stored[roleName] = nil
+						current[groupIdStr] = next(stored) ~= nil and stored or nil
+					end
+				end
+				return current
+			end)
+		end)
+	end
+
+	-- Sync to other servers (no-op when DataStore features are disabled)
+	internal.publish(self._msgChannel, {
+		action = ACTION.DEAUTH_ROLE,
+		roleName = roleName,
+	})
 
 	return removed
 end
