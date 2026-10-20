@@ -623,6 +623,10 @@ function marble:_resolvePlayerRoles(player: Player)
 		return internal.outranks(self, a, 0, b, 0)
 	end)
 
+	-- The player may have left during a group lookup. PlayerRemoving already
+	-- cleared their entry, so writing it back would leak it.
+	if player.Parent ~= Players then return end
+
 	self.userRoles[uid] = roles
 	self.userUpdated:Fire(player)
 end
