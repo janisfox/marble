@@ -375,6 +375,7 @@ function marble.new(key: string, data: MarbleData)
 		Users = {} :: {[number]: string},
 	}
 	self.userRoles = {} :: {[number]: {string}}
+	self._resolveSeq = {} :: {[number]: number}
 	self.roles = {} :: {[string]: Role}
 	self.permissions = {} :: {[string]: true}
 
@@ -551,6 +552,7 @@ function marble:_initPlayerHandlers()
 
 	table.insert(self._connections, Players.PlayerRemoving:Connect(function(player)
 		self.userRoles[player.UserId] = nil
+		self._resolveSeq[player.UserId] = nil
 	end))
 
 	-- Cover players that joined before this runtime existed. Resolution hits
@@ -582,6 +584,11 @@ end
 function marble:_resolvePlayerRoles(player: Player)
 	local uid = player.UserId
 	local roles = {}
+
+	-- Resolves for the same player can overlap since group lookups yield.
+	-- Only the most recently started one may write its result.
+	local seq = (self._resolveSeq[uid] or 0) + 1
+	self._resolveSeq[uid] = seq
 
 	-- Direct user authorization
 	local directRole = self.authorized.Users[uid]
@@ -626,6 +633,9 @@ function marble:_resolvePlayerRoles(player: Player)
 	-- The player may have left during a group lookup. PlayerRemoving already
 	-- cleared their entry, so writing it back would leak it.
 	if player.Parent ~= Players then return end
+
+	-- A newer resolve started meanwhile and reflects more recent state
+	if self._resolveSeq[uid] ~= seq then return end
 
 	self.userRoles[uid] = roles
 	self.userUpdated:Fire(player)
