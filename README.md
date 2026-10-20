@@ -150,7 +150,7 @@ marble.deauthGroupRole(self, groupId: number, roleName: string, datastore: boole
 runtime:deauthGroupRole(groupId: number, roleName: string, datastore: boolean?)
 ```
 ---
-### marble.dauthRole
+### marble.deauthRole
 Revokes all users and groups authorized with a specific role.
 Useful for removing access when a role is deleted or compromised.
 ```luau
