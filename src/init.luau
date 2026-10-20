@@ -42,6 +42,7 @@ local ACTION = {
 	DEAUTH_USER = "DEAUTH_USER",
 	DEAUTH_GROUP = "DEAUTH_GROUP",
 	DEAUTH_GROUP_ROLE = "DEAUTH_GROUP_ROLE",
+	REGISTER_ROLE = "REGISTER_ROLE",
 	MODIFY_ROLE = "MODIFY_ROLE",
 	DEAUTH_ROLE = "DEAUTH_ROLE",
 }
@@ -608,7 +609,7 @@ end
 --[[
 	Applies a remote synchronization action received from MessagingService.
 	Handles AUTH_USER, DEAUTH_USER, AUTH_GROUP, DEAUTH_GROUP, DEAUTH_GROUP_ROLE,
-	MODIFY_ROLE and DEAUTH_ROLE actions.
+	REGISTER_ROLE, MODIFY_ROLE and DEAUTH_ROLE actions.
 	@param payload The message payload containing action and parameters
 ]]
 function marble:_applyRemoteAction(payload: {[string]: any})
@@ -616,10 +617,13 @@ function marble:_applyRemoteAction(payload: {[string]: any})
 
 	local action = payload.action
 
+	-- Auth actions are stored even when the role is not registered here yet,
+	-- matching how saved authorizations load. Resolution skips unknown roles
+	-- until the role arrives (via REGISTER_ROLE, code, or the next load).
 	if action == ACTION.AUTH_USER then
 		local userId = payload.userId
 		local roleName = payload.roleName
-		if typeof(userId) == "number" and internal.validateRole(self, roleName) then
+		if typeof(userId) == "number" and typeof(roleName) == "string" then
 			self.authorized.Users[userId] = roleName
 			local player = Players:GetPlayerByUserId(userId)
 			if player then
@@ -642,7 +646,7 @@ function marble:_applyRemoteAction(payload: {[string]: any})
 		local groupId = payload.groupId
 		local roleName = payload.roleName
 		local rank = payload.rank
-		if typeof(groupId) == "number" and internal.validateRole(self, roleName) then
+		if typeof(groupId) == "number" and typeof(roleName) == "string" then
 			local bindings = self.authorized.Groups[groupId] or {}
 			bindings[roleName] = typeof(rank) == "number" and math.max(rank, 0) or 0
 			self.authorized.Groups[groupId] = bindings
@@ -667,6 +671,35 @@ function marble:_applyRemoteAction(payload: {[string]: any})
 			end
 			self:_resolveAllPlayers()
 		end
+
+	elseif action == ACTION.REGISTER_ROLE then
+		local roleName = payload.roleName
+		if typeof(roleName) ~= "string" or roleName == "" then return end
+
+		-- Roles defined in this server's code take precedence, as on load
+		local existing = self.roles[roleName]
+		if existing and not existing.datastore then return end
+
+		local permissions = {}
+		if typeof(payload.permissions) == "table" then
+			for perm, val in payload.permissions do
+				if typeof(perm) == "string" and typeof(val) == "boolean" then
+					internal.registerPermission(self, perm)
+					permissions[perm] = val
+				end
+			end
+		end
+
+		self.roles[roleName] = {
+			permissions = permissions,
+			color = internal.decodeColor(payload.color),
+			priority = internal.normalizePriority(payload.priority),
+			datastore = true,
+			allowAuthManagement = payload.allowAuthManagement == true,
+		}
+
+		-- Authorizations for this role may have arrived before the role did
+		self:_resolveAllPlayers()
 
 	elseif action == ACTION.MODIFY_ROLE then
 		local roleName = payload.roleName
@@ -693,7 +726,8 @@ function marble:_applyRemoteAction(payload: {[string]: any})
 
 	elseif action == ACTION.DEAUTH_ROLE then
 		local roleName = payload.roleName
-		if internal.validateRole(self, roleName) then
+		-- Strip even if the role is unknown here, since its assignments may not be
+		if typeof(roleName) == "string" then
 			self:_stripRole(roleName)
 			self:_resolveAllPlayers()
 		end
@@ -850,6 +884,16 @@ function marble:registerRole(data: RoleData): boolean
 				return current
 			end)
 		end)
+
+		-- Other servers only load saved roles on startup, so tell them now
+		internal.publish(self._msgChannel, {
+			action = ACTION.REGISTER_ROLE,
+			roleName = data.name,
+			permissions = permissionCopy,
+			color = internal.encodeColor(data.color),
+			priority = priority,
+			allowAuthManagement = data.allowAuthManagement == true,
+		})
 	end
 
 	-- Late-registered roles may unlock authorizations stored before they existed.
