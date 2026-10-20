@@ -282,6 +282,17 @@ function internal.groupRank(userId: number, groupId: number): number
 end
 
 --[[
+	Copies a role so callers cannot mutate the runtime's state through it.
+	@param role The role to copy
+	@return A copy with its own permissions table
+]]
+function internal.copyRole(role: any): any
+	local copy = table.clone(role)
+	copy.permissions = table.clone(role.permissions)
+	return copy
+end
+
+--[[
 	Normalizes a stored/received group entry into the multi-role binding map.
 	Accepts both the current { [roleName] = minRank } shape and the legacy
 	single-role { roleName = ..., rank = ... } shape for backwards compatibility.
@@ -1386,7 +1397,8 @@ function marble:getTopRole(userId: number): (string?, Role?)
 	local roles = self.userRoles[userId]
 	local topRole = roles and roles[1]
 	if not topRole then return nil, nil end
-	return topRole, self.roles[topRole]
+	local role = self.roles[topRole]
+	return topRole, role and internal.copyRole(role)
 end
 
 --[[
@@ -1476,7 +1488,7 @@ end
 function marble:getRole(roleName: string): Role?
 	if not isServer then return nil end
 	if not internal.validateRole(self, roleName) then return nil end
-	return self.roles[roleName]
+	return internal.copyRole(self.roles[roleName])
 end
 
 --[[
@@ -1485,7 +1497,11 @@ end
 ]]
 function marble:getAllRoles(): {[string]: Role}
 	if not isServer then return {} end
-	return table.clone(self.roles)
+	local roles = {}
+	for roleName, role in self.roles do
+		roles[roleName] = internal.copyRole(role)
+	end
+	return roles
 end
 
 --[[
@@ -1497,7 +1513,7 @@ function marble:getRolesByPriority(): {{name: string, role: Role}}
 
 	local ordered = {}
 	for roleName, role in self.roles do
-		table.insert(ordered, { name = roleName, role = role })
+		table.insert(ordered, { name = roleName, role = internal.copyRole(role) })
 	end
 	table.sort(ordered, function(a, b)
 		return internal.outranks(self, a.name, 0, b.name, 0)
