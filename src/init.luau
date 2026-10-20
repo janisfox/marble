@@ -469,25 +469,33 @@ function marble:_initDataStore()
 			end
 		end
 
-		-- Load persisted user authorizations
+		-- Load persisted user authorizations. Entries set in memory while loading
+		-- (by code or another server) are newer than the saved ones, so they win.
 		local savedUserAuth = internal.dsGet(self._dsUserAuth, "users")
 		if typeof(savedUserAuth) == "table" then
 			for userIdStr, roleName in savedUserAuth do
 				local userId = tonumber(userIdStr)
-				if userId and typeof(roleName) == "string" then
-					-- Store unconditionally; role may be registered later in code
+				if userId and typeof(roleName) == "string" and self.authorized.Users[userId] == nil then
+					-- Store even if unregistered; role may be registered later in code
 					self.authorized.Users[userId] = roleName
 				end
 			end
 		end
 
-		-- Load persisted group authorizations (legacy single-role entries are migrated)
+		-- Load persisted group authorizations (legacy single-role entries are migrated).
+		-- Saved bindings are merged into any the group already has in memory.
 		local savedGroupAuth = internal.dsGet(self._dsGroupAuth, "groups")
 		if typeof(savedGroupAuth) == "table" then
 			for groupIdStr, entry in savedGroupAuth do
 				local groupId = tonumber(groupIdStr)
-				local bindings = groupId and internal.normalizeGroupEntry(entry)
-				if bindings then
+				local saved = groupId and internal.normalizeGroupEntry(entry)
+				if saved then
+					local bindings = self.authorized.Groups[groupId] or {}
+					for roleName, minRank in saved do
+						if bindings[roleName] == nil then
+							bindings[roleName] = minRank
+						end
+					end
 					self.authorized.Groups[groupId] = bindings
 				end
 			end
