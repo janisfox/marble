@@ -85,13 +85,15 @@ function internal.validateString(value: any, fieldName: string): boolean
 end
 
 --[[
-	Validates that a value is a positive number.
+	Validates that a value is a finite, non-negative number.
+	NaN and infinities are rejected since they cannot be used as table keys
+	(NaN) or meaningful IDs/ranks.
 	@param value The value to validate
 	@param fieldName The name of the field for error messages
 	@return true if valid, false otherwise
 ]]
 function internal.validateNumber(value: any, fieldName: string): boolean
-	if typeof(value) ~= "number" or value < 0 then
+	if typeof(value) ~= "number" or value ~= value or value == math.huge or value < 0 then
 		warn("[Marble] Invalid " .. fieldName .. ": expected non-negative number")
 		return false
 	end
@@ -960,10 +962,7 @@ function marble:auth(authType: "user" | "group", id: number, roleName: string, r
 	if not isServer then return false end
 	if not internal.validateNumber(id, "id") then return false end
 	if not internal.validateRole(self, roleName) then return false end
-	if rank ~= nil and (typeof(rank) ~= "number" or rank < 0) then
-		warn("[Marble] rank must be a non-negative number")
-		return false
-	end
+	if rank ~= nil and not internal.validateNumber(rank, "rank") then return false end
 
 	if authType == "user" then
 		-- Verify userId is valid
